@@ -1,0 +1,55 @@
+[project]
+name = "backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "aiosqlite>=0.21",
+    "apscheduler>=3.11,<4",
+    "fastapi>=0.136",
+    "httpx>=0.28",
+    "polymarket-client>=0.1.0b4",
+    "pydantic>=2.13",
+    "pydantic-settings>=2.10",
+    "sqlalchemy[asyncio]>=2.0.50",
+    "uvicorn[standard]>=0.34",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.16",
+    "pytest>=8.4",
+    "pytest-asyncio>=1.0",
+    "ruff>=0.12",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",
+    "I",
+    "UP",
+    "B",
+    "ASYNC",
+    "DTZ",
+    "RUF",
+]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["apscheduler.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["polymarket.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
