@@ -14,6 +14,7 @@ from app.db.models import (
     Event,
     Market,
     MarketPriceSnapshot,
+    PaperEquitySnapshot,
     PaperFill,
     PaperOrder,
     PaperPosition,
@@ -203,6 +204,45 @@ async def test_paper_buy_fak_consumes_multiple_book_levels(session: AsyncSession
     assert position.avg_cost > Decimal("0.20")
 
 
+async def test_paper_buy_no_fills_against_no_token_book(session: AsyncSession) -> None:
+    now = datetime(2026, 6, 10, 10, tzinfo=UTC)
+    await _seed_base(
+        session,
+        now,
+        asks=[["0.20", "100"]],
+    )
+    no_signal = _signal(
+        now,
+        market_id="market-1",
+        token_id="no-yes-token",
+        stake=Decimal("10"),
+    )
+    no_signal.market_price = Decimal("0.04")
+    session.add(no_signal)
+    session.add(_book(now, [["0.04", "100"]], token_id="no-yes-token"))
+    await session.flush()
+
+    stats = await PaperEngine(Settings()).submit_signal(session, no_signal)
+    order = (
+        await session.execute(select(PaperOrder).where(PaperOrder.signal_id == no_signal.id))
+    ).scalar_one()
+    position = await session.get(PaperPosition, "no-yes-token")
+    equity = (
+        await session.execute(
+            select(PaperEquitySnapshot).order_by(PaperEquitySnapshot.ts.desc())
+        )
+    ).scalars().first()
+
+    assert stats.orders == 1
+    assert stats.fills == 1
+    assert order.token_id == "no-yes-token"
+    assert order.avg_fill_price == Decimal("0.04000")
+    assert position is not None
+    assert position.qty > Decimal("5")
+    assert equity is not None
+    assert equity.unrealized_pnl > Decimal("0")
+
+
 async def test_paper_rejects_empty_stale_insufficient_and_closed_books(
     session_factory,
 ) -> None:
@@ -265,3 +305,40 @@ async def test_paper_settlement_moves_position_to_realized_pnl(session: AsyncSes
     assert position.qty == Decimal("0")
     assert position.realized_pnl > Decimal("0")
     assert settlement_fills[0].price == Decimal("1")
+
+
+async def test_paper_no_settlement_wins_when_yes_loses(session: AsyncSession) -> None:
+    now = datetime(2026, 6, 10, 10, tzinfo=UTC)
+    await _seed_base(
+        session,
+        now,
+        asks=[["0.20", "100"]],
+    )
+    no_signal = _signal(now, token_id="no-yes-token", stake=Decimal("10"))
+    no_signal.market_price = Decimal("0.04")
+    session.add(no_signal)
+    session.add(_book(now, [["0.04", "100"]], token_id="no-yes-token"))
+    await session.flush()
+    await PaperEngine(Settings()).submit_signal(session, no_signal)
+    market = await session.get(Market, "market-1")
+    assert market is not None
+    market.closed = True
+    market.winner = False
+    market.resolved_at = now
+    await session.flush()
+
+    stats = await settle_resolved_positions(session, Settings(), now=now)
+    position = await session.get(PaperPosition, "no-yes-token")
+    settlement_fill = (
+        await session.execute(
+            select(PaperFill)
+            .where(PaperFill.token_id == "no-yes-token", PaperFill.liquidity == "SETTLEMENT")
+            .order_by(PaperFill.id)
+        )
+    ).scalars().one()
+
+    assert stats.settled == 1
+    assert position is not None
+    assert position.qty == Decimal("0")
+    assert position.realized_pnl > Decimal("0")
+    assert settlement_fill.price == Decimal("1")

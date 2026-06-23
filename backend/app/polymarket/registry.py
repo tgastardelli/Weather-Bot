@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 _WUNDERGROUND_RE = re.compile(
-    r"wunderground\.com/history/daily/(?P<cc>[a-z]{2})/(?P<city>[a-z-]+)/(?P<icao>[A-Z0-9]{4})",
+    r"wunderground\.com/history/daily/(?P<path>[a-z0-9-]+(?:/[a-z0-9-]+)*)/(?P<icao>[A-Z0-9]{4})(?:[/?#]|$)",
     re.IGNORECASE,
 )
 _HKO_RE = re.compile(r"weather\.gov\.hk", re.IGNORECASE)
@@ -24,6 +24,16 @@ class ResolutionMeta:
     station_code: str | None
     unit: Literal["C", "F"]
     rounding: Literal["round", "floor"]
+
+
+@dataclass(frozen=True)
+class CityRegistryDefault:
+    station_code: str
+    resolution_source: str
+    resolution_url: str | None
+    unit: Literal["C", "F"]
+    rounding: Literal["round", "floor"]
+    needs_review: bool
 
 
 def extract_resolution_meta(description: str) -> ResolutionMeta:
@@ -61,6 +71,7 @@ def extract_resolution_meta(description: str) -> ResolutionMeta:
 # Fonte: localização oficial das estações; usadas pelas APIs de previsão —
 # NUNCA usar o centro da cidade (edge #2 da pesquisa).
 KNOWN_STATIONS: dict[str, tuple[float, float, str]] = {
+    "KNYC": (40.7789, -73.9692, "America/New_York"),  # Central Park - NYC
     "RKSI": (37.4602, 126.4407, "Asia/Seoul"),  # Incheon Intl — Seoul
     "HKO": (22.3019, 114.1742, "Asia/Hong_Kong"),  # Hong Kong Observatory
     "KLGA": (40.7769, -73.8740, "America/New_York"),  # LaGuardia — NYC
@@ -78,6 +89,154 @@ KNOWN_STATIONS: dict[str, tuple[float, float, str]] = {
     "ZSSS": (31.1979, 121.3363, "Asia/Shanghai"),  # Hongqiao — Shanghai
     "SAEZ": (-34.8222, -58.5358, "America/Argentina/Buenos_Aires"),  # Ezeiza — Buenos Aires
     "FACT": (-33.9648, 18.6017, "Africa/Johannesburg"),  # Cape Town Intl
+    "KSEA": (47.4502, -122.3088, "America/Los_Angeles"),
+    "CYYZ": (43.6777, -79.6248, "America/Toronto"),
+    "EDDM": (48.3538, 11.7861, "Europe/Berlin"),
+    "SBGR": (-23.4356, -46.4731, "America/Sao_Paulo"),
+    "NZWN": (-41.3272, 174.8053, "Pacific/Auckland"),
+    "LTAC": (40.1281, 32.9951, "Europe/Istanbul"),
+    "LLBG": (32.0114, 34.8867, "Asia/Jerusalem"),
+    "VILK": (26.7606, 80.8893, "Asia/Kolkata"),
+}
+
+
+KNOWN_CITY_DEFAULTS: dict[str, CityRegistryDefault] = {
+    "nyc": CityRegistryDefault(
+        station_code="KNYC",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/us/ny/new-york-city/KNYC",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "shanghai": CityRegistryDefault(
+        station_code="ZSSS",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/cn/shanghai/ZSSS",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "atlanta": CityRegistryDefault(
+        station_code="KATL",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/us/ga/atlanta/KATL",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "buenos-aires": CityRegistryDefault(
+        station_code="SAEZ",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/ar/buenos-aires/SAEZ",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "chicago": CityRegistryDefault(
+        station_code="KMDW",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/us/il/chicago/KMDW",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "dallas": CityRegistryDefault(
+        station_code="KDAL",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/us/tx/dallas/KDAL",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "london": CityRegistryDefault(
+        station_code="EGLL",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/gb/london/EGLL",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "miami": CityRegistryDefault(
+        station_code="KMIA",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/us/fl/miami/KMIA",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "seattle": CityRegistryDefault(
+        station_code="KSEA",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/us/wa/seattle/KSEA",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "toronto": CityRegistryDefault(
+        station_code="CYYZ",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/ca/toronto/CYYZ",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "wellington": CityRegistryDefault(
+        station_code="NZWN",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/nz/wellington/NZWN",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "ankara": CityRegistryDefault(
+        station_code="LTAC",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/tr/ankara/LTAC",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "paris": CityRegistryDefault(
+        station_code="LFPB",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/fr/paris/LFPB",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "sao-paulo": CityRegistryDefault(
+        station_code="SBGR",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/br/sao-paulo/SBGR",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "munich": CityRegistryDefault(
+        station_code="EDDM",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/de/munich/EDDM",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
+    "tel-aviv": CityRegistryDefault(
+        station_code="LLBG",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/il/tel-aviv/LLBG",
+        unit="C",
+        rounding="round",
+        needs_review=True,
+    ),
+    "lucknow": CityRegistryDefault(
+        station_code="VILK",
+        resolution_source="wunderground",
+        resolution_url="https://www.wunderground.com/history/daily/in/lucknow/VILK",
+        unit="F",
+        rounding="round",
+        needs_review=True,
+    ),
 }
 
 
@@ -85,3 +244,7 @@ def station_info(station_code: str | None) -> tuple[float, float, str] | None:
     if station_code is None:
         return None
     return KNOWN_STATIONS.get(station_code.upper())
+
+
+def city_default(city_slug: str) -> CityRegistryDefault | None:
+    return KNOWN_CITY_DEFAULTS.get(city_slug)

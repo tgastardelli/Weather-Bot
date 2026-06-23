@@ -376,3 +376,80 @@ async def test_historical_price_backtest_prefers_valid_trade_history_points(
         "clob_prices_history": 0,
         "data_api_trades": 1,
     }
+
+
+async def test_historical_price_backtest_samples_last_trade_per_hour(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    now = datetime(2026, 6, 10, 10, 45, tzinfo=UTC)
+    async with session_factory() as session, session.begin():
+        session.add(_city(now))
+        session.add(_event(now, datetime(2026, 6, 11, 12, tzinfo=UTC)))
+        session.add(_market(now, winner=True))
+        session.add_all(
+            [
+                MarketTradeHistoryPoint(
+                    ts=datetime(2026, 6, 10, 10, 5, tzinfo=UTC),
+                    market_id="market-1",
+                    token_id="yes-token",
+                    condition_id="0xcond",
+                    price=Decimal("0.90"),
+                    size=Decimal("5"),
+                    side="BUY",
+                    transaction_hash="0xold",
+                    source="data_api_trades",
+                ),
+                MarketTradeHistoryPoint(
+                    ts=now,
+                    market_id="market-1",
+                    token_id="yes-token",
+                    condition_id="0xcond",
+                    price=Decimal("0.20"),
+                    size=Decimal("5"),
+                    side="BUY",
+                    transaction_hash="0xnew",
+                    source="data_api_trades",
+                ),
+            ]
+        )
+        session.add(
+            ForecastSnapshot(
+                fetched_at=now,
+                city_slug="seoul",
+                source="historical",
+                model="gfs",
+                target_date=date(2026, 6, 10),
+                lead_days=1,
+                tmax_c=25.0,
+                n_members=0,
+            )
+        )
+
+    results = await run_backtest(
+        session_factory,
+        Settings(
+            cities=["seoul"],
+            deterministic_models=["gfs"],
+            min_edge_net=Decimal("0.01"),
+            prob_clamp_epsilon=0.0,
+            validation_history_days=30,
+        ),
+        mode="historical-price",
+    )
+    by_profile = {result.profile: result for result in results}
+    params = json.loads(by_profile["max_edge"].params_json)
+
+    assert by_profile["max_edge"].n_trades == 1
+    assert by_profile["max_edge"].total_pnl == Decimal("38.08")
+    assert params["price_sampling"] == "last_trade_per_market_per_60m_bucket"
+    assert params["n_raw_price_points"] == 2
+    assert params["n_sampled_price_points"] == 1
+    assert params["n_candidate_price_points"] == 1
+    assert params["price_source_raw_counts"] == {
+        "clob_prices_history": 0,
+        "data_api_trades": 2,
+    }
+    assert params["price_source_sampled_counts"] == {
+        "clob_prices_history": 0,
+        "data_api_trades": 1,
+    }

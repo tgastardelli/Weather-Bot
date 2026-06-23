@@ -1,9 +1,9 @@
 """Gamma normalization tests."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from app.polymarket.normalize import normalize_event, parse_bucket
+from app.polymarket.normalize import normalize_event, parse_bucket, target_date_from_event_slug
 
 
 def test_parse_bucket_shapes() -> None:
@@ -58,3 +58,35 @@ def test_normalize_highest_temperature_event() -> None:
     assert event.target_date == date(2026, 6, 10)
     assert event.markets[0].yes_token_id == "yes-token"
     assert event.markets[0].outcome_prices == (Decimal("0.12"), Decimal("0.88"))
+
+
+def test_normalize_prefers_slug_date_when_gamestart_is_offset() -> None:
+    raw = {
+        "id": "124",
+        "slug": "highest-temperature-in-atlanta-on-december-10",
+        "title": "Highest temperature in Atlanta on December 10?",
+        "endDate": "2025-12-10T12:00:00Z",
+        "markets": [
+            {
+                "id": "m1",
+                "conditionId": "0xcond",
+                "question": "Will it be 58-59°F?",
+                "groupItemTitle": "58-59°F",
+                "groupItemThreshold": "1",
+                "clobTokenIds": '["yes-token","no-token"]',
+                "gameStartTime": "2025-12-09 00:00:00+00",
+            }
+        ],
+    }
+
+    event = normalize_event(raw)
+
+    assert event is not None
+    assert event.target_date == date(2025, 12, 10)
+
+
+def test_target_date_from_slug_chooses_year_near_end_date() -> None:
+    assert target_date_from_event_slug(
+        "highest-temperature-in-atlanta-on-december-31",
+        datetime(2026, 1, 1, 12, tzinfo=UTC),
+    ) == date(2025, 12, 31)

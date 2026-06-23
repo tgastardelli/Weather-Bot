@@ -26,7 +26,19 @@ from app.db.models import (
 )
 from app.polymarket.normalize import Bucket
 from app.strategy.edge import cost_per_share, gross_edge, net_edge
+from app.strategy.high_reward_policy import (
+    HighRewardDecision,
+    HighRewardRuntimePolicy,
+    evaluate_high_reward_policy,
+    latest_high_reward_policy,
+)
 from app.strategy.probability import Rounding, bucket_probabilities
+from app.strategy.probability_calibration import ProbabilityContext
+from app.strategy.repair_policy import (
+    StrategyPolicyDecision,
+    add_signal_strategy_audit,
+    apply_strategy_policy,
+)
 from app.strategy.sizing import kelly_stake
 
 logger = logging.getLogger(__name__)
@@ -173,6 +185,9 @@ async def scan_and_store_signals(
 ) -> list[Signal]:
     now = now or datetime.now(UTC)
     created: list[Signal] = []
+    high_reward_policy: HighRewardRuntimePolicy | None = None
+    if settings.strategy_policy_mode == "repair_v5":
+        high_reward_policy = await latest_high_reward_policy(session)
 
     events = (
         (
@@ -214,27 +229,65 @@ async def scan_and_store_signals(
 
         for market, prob in zip(markets, probs, strict=True):
             price_row = await _latest_price(session, market.id)
-            if price_row is None or price_row.best_ask is None:
+            if price_row is None:
                 continue
-            ask = price_row.best_ask
-            if not (Decimal(0) < ask < Decimal(1)):
+            token_id = market.yes_token_id
+            outcome_side = "YES"
+            if high_reward_policy is not None:
+                high_reward_decision = await evaluate_high_reward_policy(
+                    session,
+                    settings,
+                    policy=high_reward_policy,
+                    city=city,
+                    bucket_kind=market.bucket_kind,
+                    target_date=event_row.target_date,
+                    raw_yes_prob=prob,
+                    yes_ask=price_row.best_ask,
+                    yes_bid=price_row.best_bid,
+                )
+                decision = _policy_decision_from_high_reward(high_reward_decision, prob)
+                price = high_reward_decision.market_price
+                outcome_side = high_reward_decision.side
+                token_id = market.no_token_id if outcome_side == "NO" else market.yes_token_id
+                profiles = ["max_edge"]
+            else:
+                if price_row.best_ask is None:
+                    continue
+                price = price_row.best_ask
+                if not (Decimal(0) < price < Decimal(1)):
+                    continue
+                decision = await apply_strategy_policy(
+                    session,
+                    settings,
+                    ProbabilityContext(
+                        city_slug=city.slug,
+                        bucket_kind=market.bucket_kind,
+                        model_prob=prob,
+                        market_price=price,
+                        hours_to_close=hours_to_close,
+                        target_date=event_row.target_date,
+                    ),
+                )
+                profiles = ["max_edge"]
+                if price <= settings.longshot_max_price:
+                    profiles.append("longshot")
+            if not decision.eligible:
                 continue
-            e_net = net_edge(prob, ask, settings.taker_fee_rate)
+            model_prob = decision.model_prob
+            if not (Decimal(0) < price < Decimal(1)):
+                continue
+            e_net = net_edge(model_prob, price, settings.taker_fee_rate)
             if e_net < settings.min_edge_net:
                 continue
-            e_gross = gross_edge(prob, ask)
-            cost = cost_per_share(ask, settings.taker_fee_rate)
+            e_gross = gross_edge(model_prob, price)
+            cost = cost_per_share(price, settings.taker_fee_rate)
             stake = kelly_stake(
-                prob,
+                model_prob,
                 cost,
                 bankroll=settings.bankroll,
                 kelly_multiplier=settings.kelly_fraction,
                 max_stake_per_order=settings.max_stake_per_order,
             )
-
-            profiles = ["max_edge"]
-            if ask <= settings.longshot_max_price:
-                profiles.append("longshot")
 
             for profile in profiles:
                 if await _recent_duplicate(session, market.id, profile, now, e_net):
@@ -249,11 +302,11 @@ async def scan_and_store_signals(
                 signal = Signal(
                     ts=now,
                     market_id=market.id,
-                    token_id=market.yes_token_id,
+                    token_id=token_id,
                     side="BUY",
                     profile=profile,
-                    model_prob=prob,
-                    market_price=ask,
+                    model_prob=model_prob,
+                    market_price=price,
                     edge_gross=e_gross,
                     edge_net=e_net,
                     stake=stake if status == "PROPOSED" else Decimal(0),
@@ -261,16 +314,33 @@ async def scan_and_store_signals(
                     reason=reason,
                 )
                 session.add(signal)
+                await session.flush()
+                add_signal_strategy_audit(session, signal, decision)
                 created.append(signal)
                 logger.info(
-                    "signal %s %s %s ask=%s p=%.3f edge_net=%s stake=%s",
+                    "signal %s %s %s outcome=%s price=%s p=%.3f edge_net=%s stake=%s",
                     profile,
                     market.group_item_title,
                     status,
-                    ask,
-                    prob,
+                    outcome_side,
+                    price,
+                    model_prob,
                     e_net,
                     signal.stake,
                 )
     await session.flush()
     return created
+
+
+def _policy_decision_from_high_reward(
+    decision: HighRewardDecision, raw_yes_prob: float
+) -> StrategyPolicyDecision:
+    return StrategyPolicyDecision(
+        policy_name=decision.policy_name,
+        raw_prob=raw_yes_prob,
+        model_prob=decision.model_prob,
+        segment_key=decision.segment_key,
+        n_samples=0,
+        eligible=decision.eligible,
+        reason=decision.reason,
+    )

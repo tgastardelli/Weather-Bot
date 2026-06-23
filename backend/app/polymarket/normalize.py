@@ -14,10 +14,30 @@ from typing import Any, Literal
 BucketKind = Literal["below", "exact", "range", "above"]
 
 _EVENT_SLUG_RE = re.compile(r"^highest-temperature-in-(?P<city>[a-z0-9-]+)-on-")
+_EVENT_DATE_SLUG_RE = re.compile(
+    r"^highest-temperature-in-[a-z0-9-]+-on-"
+    r"(?P<month>january|february|march|april|may|june|july|august|"
+    r"september|october|november|december)-"
+    r"(?P<day>\d{1,2})(?:-(?P<year>\d{4}))?$"
+)
 _BELOW_RE = re.compile(r"^(?P<v>-?\d+(?:\.\d+)?)°(?P<u>[CF]) or below$")
 _ABOVE_RE = re.compile(r"^(?P<v>-?\d+(?:\.\d+)?)°(?P<u>[CF]) or (?:higher|above)$")
 _EXACT_RE = re.compile(r"^(?P<v>-?\d+(?:\.\d+)?)°(?P<u>[CF])$")
 _RANGE_RE = re.compile(r"^(?P<lo>-?\d+(?:\.\d+)?)-(?P<hi>-?\d+(?:\.\d+)?)°(?P<u>[CF])$")
+_MONTHS = {
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "april": 4,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "september": 9,
+    "october": 10,
+    "november": 11,
+    "december": 12,
+}
 
 
 @dataclass(frozen=True)
@@ -105,8 +125,30 @@ def city_slug_from_event_slug(event_slug: str) -> str | None:
     return m["city"] if m else None
 
 
-def _target_date_from_markets(markets: list[dict[str, Any]], end_date: datetime | None) -> date:
+def target_date_from_event_slug(event_slug: str, end_date: datetime | None) -> date | None:
+    """Infer target day from Gamma weather event slugs when available."""
+    match = _EVENT_DATE_SLUG_RE.match(event_slug)
+    if match is None:
+        return None
+    month = _MONTHS[match["month"]]
+    day = int(match["day"])
+    if match["year"]:
+        return date(int(match["year"]), month, day)
+    if end_date is None:
+        return None
+    end_day = end_date.date()
+    candidates = [
+        date(year, month, day) for year in (end_day.year - 1, end_day.year, end_day.year + 1)
+    ]
+    return min(candidates, key=lambda candidate: abs((candidate - end_day).days))
+
+
+def _target_date_from_markets(
+    markets: list[dict[str, Any]], end_date: datetime | None, event_slug: str
+) -> date:
     """Dia-alvo local: gameStartTime quando presente; senão endDate - 1 dia."""
+    if slug_date := target_date_from_event_slug(event_slug, end_date):
+        return slug_date
     for market in markets:
         raw = market.get("gameStartTime")
         if raw:
@@ -167,7 +209,7 @@ def normalize_event(raw: dict[str, Any]) -> NormalizedEvent | None:
         slug=slug,
         title=str(raw.get("title") or ""),
         city_slug=city,
-        target_date=_target_date_from_markets(markets_raw, end_date),
+        target_date=_target_date_from_markets(markets_raw, end_date, slug),
         end_date=end_date,
         neg_risk_market_id=str(raw.get("negRiskMarketID") or "") or None,
         active=bool(raw.get("active", True)),

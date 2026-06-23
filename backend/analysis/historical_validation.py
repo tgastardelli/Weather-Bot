@@ -212,7 +212,12 @@ def _profile_payload(profile: str, total_pnl: str, params: dict[str, Any]) -> di
         "avg_edge_net": params.get("avg_edge_net"),
         "avg_market_price": params.get("avg_market_price"),
         "top_5_abs_pnl_share": params.get("top_5_abs_pnl_share"),
+        "n_raw_price_points": params.get("n_raw_price_points"),
+        "n_sampled_price_points": params.get("n_sampled_price_points"),
+        "price_sampling": params.get("price_sampling"),
         "price_source_counts": params.get("price_source_counts"),
+        "price_source_raw_counts": params.get("price_source_raw_counts"),
+        "price_source_sampled_counts": params.get("price_source_sampled_counts"),
         "bootstrap_iterations": params.get("bootstrap_iterations"),
         "pnl_ci_low": params.get("pnl_ci_low"),
         "pnl_ci_high": params.get("pnl_ci_high"),
@@ -351,6 +356,9 @@ async def generate_historical_validation_report(
                 else HISTORICAL_PRICE_EXECUTION_PROXY
             )
         ),
+        "price_sampling": max_edge_params.get("price_sampling"),
+        "n_raw_price_points": max_edge_params.get("n_raw_price_points"),
+        "n_sampled_price_points": max_edge_params.get("n_sampled_price_points"),
         "price_source_counts": max_edge_params.get(
             "price_source_counts",
             {
@@ -358,6 +366,8 @@ async def generate_historical_validation_report(
                 "data_api_trades": int(total_trade_points or 0),
             },
         ),
+        "price_source_raw_counts": max_edge_params.get("price_source_raw_counts"),
+        "price_source_sampled_counts": max_edge_params.get("price_source_sampled_counts"),
     }
 
     async with session_factory() as session, session.begin():

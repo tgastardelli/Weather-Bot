@@ -243,6 +243,24 @@ class DailyObservedMax(Base):
     __table_args__ = (UniqueConstraint("city_slug", "target_date", "source"),)
 
 
+class ResolutionBackfillRun(Base):
+    """Audit trail for official/reconstructable resolution observations."""
+
+    __tablename__ = "resolution_backfill_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    cities_json: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(32), index=True)
+    summary_json: Mapped[str] = mapped_column(Text)
+    rows_json: Mapped[str] = mapped_column(Text)
+    errors_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+
+
 class Resolution(Base):
     __tablename__ = "resolutions"
 
@@ -270,6 +288,44 @@ class Signal(Base):
     stake: Mapped[Decimal]
     status: Mapped[str] = mapped_column(String(12), index=True)  # PROPOSED | SKIPPED
     reason: Mapped[str | None] = mapped_column(Text)
+
+
+class SignalStrategyAudit(Base):
+    """Probabilidade usada pelo sinal após política/calibração estratégica."""
+
+    __tablename__ = "signal_strategy_audit"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    signal_id: Mapped[int] = mapped_column(ForeignKey("signals.id"), unique=True, index=True)
+    ts: Mapped[datetime] = mapped_column(index=True)
+    policy_name: Mapped[str] = mapped_column(String(48), index=True)
+    segment_key: Mapped[str | None] = mapped_column(String(192), index=True)
+    raw_model_prob: Mapped[float]
+    calibrated_model_prob: Mapped[float]
+    n_samples: Mapped[int] = mapped_column(default=0)
+    eligible: Mapped[bool] = mapped_column(default=True)
+    reason: Mapped[str | None] = mapped_column(Text)
+
+
+class StrategyShadowDecision(Base):
+    """Diagnostic-only decision record; never creates a signal, order, or fill."""
+
+    __tablename__ = "strategy_shadow_decisions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ts: Mapped[datetime] = mapped_column(index=True)
+    policy_name: Mapped[str] = mapped_column(String(64), index=True)
+    market_id: Mapped[str] = mapped_column(ForeignKey("markets.id"), index=True)
+    event_id: Mapped[str] = mapped_column(ForeignKey("events.id"), index=True)
+    city_slug: Mapped[str] = mapped_column(ForeignKey("city_registry.slug"), index=True)
+    target_date: Mapped[date] = mapped_column(Date, index=True)
+    raw_prob: Mapped[float]
+    calibrated_prob: Mapped[float]
+    market_price: Mapped[Decimal]
+    edge_net: Mapped[Decimal]
+    reason: Mapped[str | None] = mapped_column(Text)
+    would_trade: Mapped[bool] = mapped_column(default=False, index=True)
+    segment_key: Mapped[str | None] = mapped_column(String(192), index=True)
 
 
 class PaperOrder(Base):
@@ -387,6 +443,87 @@ class CityVolatilityMetric(Base):
     )
 
 
+class CityResearchAuditRun(Base):
+    __tablename__ = "city_research_audit_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    summary_json: Mapped[str] = mapped_column(Text)
+    cities_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+
+
+class CityEdgeRankingRun(Base):
+    __tablename__ = "city_edge_ranking_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    summary_json: Mapped[str] = mapped_column(Text)
+    cities_json: Mapped[str] = mapped_column(Text)
+    research_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+
+
+class WeatherCityDiscoveryRun(Base):
+    __tablename__ = "weather_city_discovery_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    summary_json: Mapped[str] = mapped_column(Text)
+    cities_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+
+
+class CityResolutionPromotionAuditRun(Base):
+    __tablename__ = "city_resolution_promotion_audit_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    cities_json: Mapped[str] = mapped_column(Text)
+    summary_json: Mapped[str] = mapped_column(Text)
+    resolution_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+
+
+class CityPromotionApplyRun(Base):
+    __tablename__ = "city_promotion_apply_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    requested_cities_json: Mapped[str] = mapped_column(Text)
+    promoted_cities_json: Mapped[str] = mapped_column(Text)
+    blocked_json: Mapped[str] = mapped_column(Text)
+    summary_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+
+
+class CityOnboardingRun(Base):
+    __tablename__ = "city_onboarding_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    cities_json: Mapped[str] = mapped_column(Text)
+    summary_json: Mapped[str] = mapped_column(Text)
+    checks_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+
+
 class BacktestResult(Base):
     __tablename__ = "backtest_results"
 
@@ -444,3 +581,179 @@ class HistoricalValidationRun(Base):
     model_health_json: Mapped[str] = mapped_column(Text)
     trading_json: Mapped[str] = mapped_column(Text)
     gates_json: Mapped[str] = mapped_column(Text)
+
+
+class HistoricalDiagnosticsRun(Base):
+    __tablename__ = "historical_diagnostics_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    cities_json: Mapped[str] = mapped_column(Text)
+    summary_json: Mapped[str] = mapped_column(Text)
+    segments_json: Mapped[str] = mapped_column(Text)
+    calibration_json: Mapped[str] = mapped_column(Text)
+    recommendations_json: Mapped[str] = mapped_column(Text)
+
+
+class StrategyRepairRun(Base):
+    __tablename__ = "strategy_repair_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    cities_json: Mapped[str] = mapped_column(Text)
+    summary_json: Mapped[str] = mapped_column(Text)
+    baseline_json: Mapped[str] = mapped_column(Text)
+    variants_json: Mapped[str] = mapped_column(Text)
+    best_variant_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+
+
+class StrategyHypothesisAuditRun(Base):
+    __tablename__ = "strategy_hypothesis_audit_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    cities_json: Mapped[str] = mapped_column(Text)
+    summary_json: Mapped[str] = mapped_column(Text)
+    blockers_json: Mapped[str] = mapped_column(Text)
+    timing_json: Mapped[str] = mapped_column(Text)
+    bucket_audit_json: Mapped[str] = mapped_column(Text)
+    stability_json: Mapped[str] = mapped_column(Text)
+    segments_json: Mapped[str] = mapped_column(Text)
+
+
+class StrategyExperimentRun(Base):
+    __tablename__ = "strategy_experiment_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    experiment_set: Mapped[str] = mapped_column(String(64), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    cities_json: Mapped[str] = mapped_column(Text)
+    summary_json: Mapped[str] = mapped_column(Text)
+    variants_json: Mapped[str] = mapped_column(Text)
+    best_variant_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+    shadow_json: Mapped[str] = mapped_column(Text)
+
+
+class StrategyDiscoveryRun(Base):
+    __tablename__ = "strategy_discovery_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    universe: Mapped[str] = mapped_column(String(32), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    cities_json: Mapped[str] = mapped_column(Text)
+    summary_json: Mapped[str] = mapped_column(Text)
+    families_json: Mapped[str] = mapped_column(Text)
+    best_family_json: Mapped[str] = mapped_column(Text)
+    folds_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+
+
+class FeatureDiscoveryRun(Base):
+    __tablename__ = "feature_discovery_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    cities_json: Mapped[str] = mapped_column(Text)
+    summary_json: Mapped[str] = mapped_column(Text)
+    families_json: Mapped[str] = mapped_column(Text)
+    best_family_json: Mapped[str] = mapped_column(Text)
+    folds_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+
+
+class FeatureCandidateAuditRun(Base):
+    __tablename__ = "feature_candidate_audit_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    feature_discovery_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("feature_discovery_runs.id"), index=True
+    )
+    cities_json: Mapped[str] = mapped_column(Text)
+    summary_json: Mapped[str] = mapped_column(Text)
+    profile_json: Mapped[str] = mapped_column(Text)
+    segments_json: Mapped[str] = mapped_column(Text)
+    decision_trace_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+
+
+class HighRewardCityHuntRun(Base):
+    __tablename__ = "high_reward_city_hunt_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    cities_json: Mapped[str] = mapped_column(Text)
+    summary_json: Mapped[str] = mapped_column(Text)
+    rankings_json: Mapped[str] = mapped_column(Text)
+    candidates_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+
+
+class DiscoveryCandidateAuditRun(Base):
+    __tablename__ = "discovery_candidate_audit_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(index=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    window_start: Mapped[date | None] = mapped_column(Date)
+    window_end: Mapped[date | None] = mapped_column(Date)
+    discovery_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("strategy_discovery_runs.id"), index=True
+    )
+    cities_json: Mapped[str] = mapped_column(Text)
+    summary_json: Mapped[str] = mapped_column(Text)
+    concentration_json: Mapped[str] = mapped_column(Text)
+    folds_json: Mapped[str] = mapped_column(Text)
+    city_resolution_json: Mapped[str] = mapped_column(Text)
+    timing_json: Mapped[str] = mapped_column(Text)
+    segments_json: Mapped[str] = mapped_column(Text)
+    gates_json: Mapped[str] = mapped_column(Text)
+
+
+class StrategyCalibrationSegment(Base):
+    __tablename__ = "strategy_calibration_segments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("strategy_repair_runs.id"), index=True)
+    policy_name: Mapped[str] = mapped_column(String(48), index=True)
+    segment_key: Mapped[str] = mapped_column(String(192), index=True)
+    n: Mapped[int]
+    wins: Mapped[int]
+    observed_rate: Mapped[float]
+    brier_delta: Mapped[float | None]
+    pnl: Mapped[Decimal]
+    eligible: Mapped[bool] = mapped_column(default=False, index=True)
+    alpha: Mapped[float]
+    cap: Mapped[float]
+    min_samples: Mapped[int]
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "policy_name", "segment_key"),
+        Index("ix_strategy_calibration_policy_eligible", "policy_name", "eligible"),
+    )

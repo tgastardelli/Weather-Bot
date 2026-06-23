@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.collectors.backfill import _selected_cities, parse_cities
 from app.collectors.forecasts import collect_forecasts
 from app.collectors.market_history_backfill import (
     collect_market_history,
@@ -148,6 +149,66 @@ async def test_collect_markets_is_idempotent(
     assert len(events) == 1
     assert len(markets) == 1
     assert len(snapshots) == 2
+
+
+def test_backfill_parse_cities() -> None:
+    assert parse_cities("nyc, shanghai,,") == ["nyc", "shanghai"]
+    assert parse_cities(None) is None
+
+
+async def test_backfill_selected_cities_limits_to_requested_registry_rows(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    now = datetime(2026, 6, 18, tzinfo=UTC)
+    async with session_factory() as session, session.begin():
+        session.add_all(
+            [
+                City(
+                    slug="nyc",
+                    name="NYC",
+                    series_slug="nyc-daily-weather",
+                    station_code="KNYC",
+                    station_name=None,
+                    latitude=40.7,
+                    longitude=-73.9,
+                    timezone="America/New_York",
+                    unit="F",
+                    resolution_source="wunderground",
+                    resolution_url=None,
+                    rounding="round",
+                    needs_review=True,
+                    active=True,
+                    updated_at=now,
+                ),
+                City(
+                    slug="seoul",
+                    name="Seoul",
+                    series_slug="seoul-daily-weather",
+                    station_code="RKSI",
+                    station_name=None,
+                    latitude=37.4,
+                    longitude=126.4,
+                    timezone="Asia/Seoul",
+                    unit="F",
+                    resolution_source="wunderground",
+                    resolution_url=None,
+                    rounding="round",
+                    needs_review=False,
+                    active=True,
+                    updated_at=now,
+                ),
+            ]
+        )
+
+    async with session_factory() as session:
+        cities, missing = await _selected_cities(
+            session,
+            Settings(cities=["seoul"]),
+            ["nyc", "missing-city"],
+        )
+
+    assert [city.slug for city in cities] == ["nyc"]
+    assert missing == ["missing-city"]
 
 
 def test_prices_history_parser_handles_seconds_millis_and_invalid_rows() -> None:

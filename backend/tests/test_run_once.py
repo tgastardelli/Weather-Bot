@@ -82,13 +82,14 @@ def test_parser_accepts_markets_all_and_flags() -> None:
     parser = build_parser()
 
     markets = parser.parse_args(["markets", "--cities", "seoul,hong-kong,nyc", "--json"])
-    all_job = parser.parse_args(["all", "--no-signals"])
+    all_job = parser.parse_args(["all", "--no-signals", "--high-reward-fast-lane"])
 
     assert markets.job == "markets"
     assert markets.json is True
     assert parse_cities(markets.cities) == ["seoul", "hong-kong", "nyc"]
     assert all_job.job == "all"
     assert all_job.no_signals is True
+    assert all_job.high_reward_fast_lane is True
     assert parse_cities(None) is None
 
 
@@ -141,3 +142,23 @@ async def test_run_once_all_reports_ensemble_member_count(
 
     assert result.to_jsonable()["ensemble_members"] == 3
     assert result.forecast_snapshots == 2
+
+
+async def test_run_once_high_reward_fast_lane_uses_operational_cities(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    result = await run_once(
+        "markets",
+        settings=Settings(cities=["seoul"], strategy_policy_mode="raw"),
+        cities=["nyc"],
+        include_signals=False,
+        high_reward_fast_lane=True,
+        session_factory=session_factory,
+        pm_client=FakePolymarketClient(),
+    )
+
+    async with session_factory() as session:
+        events = (await session.execute(select(Event))).scalars().all()
+
+    assert result.events_upserted == 0
+    assert events == []

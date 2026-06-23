@@ -4,6 +4,7 @@ This module deliberately does not place real orders. It only proves whether the
 paper/historical gates and safety switches would allow a future live engine.
 """
 
+import json
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Protocol
@@ -12,8 +13,16 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from analysis.operational_quarantine import quarantine_payloads
 from app.config import Settings
-from app.db.models import HistoricalValidationRun, MeasurementRun, Signal
+from app.db.models import (
+    HistoricalValidationRun,
+    MeasurementRun,
+    Signal,
+    StrategyDiscoveryRun,
+    StrategyExperimentRun,
+    StrategyRepairRun,
+)
 
 GEOBLOCK_URL = "https://polymarket.com/api/geoblock"
 MICRO_CAPITAL_BANKROLL_CAP = Decimal("100")
@@ -95,6 +104,43 @@ async def build_live_readiness_report(
             .limit(1)
         )
     ).scalar_one_or_none()
+    repair = (
+        await session.execute(
+            select(StrategyRepairRun)
+            .order_by(StrategyRepairRun.run_at.desc(), StrategyRepairRun.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    experiment = (
+        await session.execute(
+            select(StrategyExperimentRun)
+            .order_by(StrategyExperimentRun.run_at.desc(), StrategyExperimentRun.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    discovery = (
+        await session.execute(
+            select(StrategyDiscoveryRun)
+            .order_by(StrategyDiscoveryRun.run_at.desc(), StrategyDiscoveryRun.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    repair_policy_name = _repair_policy_name(repair)
+    measurement_policy_name = _measurement_policy_name(measurement)
+    strategy_cities = _run_cities(repair.cities_json if repair is not None else None)
+    if repair is None and historical is not None:
+        strategy_cities = _run_cities(historical.cities_json)
+    quarantined_strategy_cities = quarantine_payloads(set(strategy_cities))
+    repaired_policy_matches = (
+        repair_policy_name is not None
+        and repair_policy_name.startswith(("repair_v2", "repair_v3", "repair_v4", "repair_v5"))
+        and measurement_policy_name == repair_policy_name
+    )
+    strategy_gate_passed = (
+        repair.status == "PROMISING"
+        if repair is not None
+        else historical is not None and historical.status == "PROMISING"
+    )
     risk_limits = _risk_limits(settings)
     geoblock_status = geoblock or GeoblockStatus("UNKNOWN", False, {}, "not_checked")
     checks = {
@@ -136,17 +182,62 @@ async def build_live_readiness_report(
             required="ALLOWED",
             reason="Polymarket geoblock preflight must pass before live orders.",
         ),
-        "historical_validation": _check(
-            historical is not None and historical.status == "PROMISING",
-            value=historical.status if historical else None,
-            required="PROMISING",
-            reason="Historical validation must pass before any capital is used.",
+        "strategy_repair": _check(
+            strategy_gate_passed,
+            value={
+                "strategy_repair_status": repair.status if repair else None,
+                "historical_validation_status": historical.status if historical else None,
+                "policy_name": repair_policy_name,
+            },
+            required=(
+                "strategy_repair PROMISING or historical_validation PROMISING "
+                "when no repair run exists"
+            ),
+            reason="The repaired historical strategy must pass before any capital is used.",
+        ),
+        "operational_cities": _check(
+            not quarantined_strategy_cities,
+            value={
+                "strategy_cities": strategy_cities,
+                "operational_quarantine": quarantined_strategy_cities,
+            },
+            required="approved strategy cannot include quarantined research-only cities",
+            reason="Quarantined cities remain diagnostic-only until resolution is verified.",
+        ),
+        "strategy_experiments": _check(
+            True,
+            value={
+                "latest_experiment_status": experiment.status if experiment else None,
+                "experiment_set": experiment.experiment_set if experiment else None,
+                "live_release": False,
+            },
+            required="diagnostic only; never a live-readiness gate",
+            reason="Diagnostic experiments can inform research but cannot approve live trading.",
+        ),
+        "strategy_discovery": _check(
+            True,
+            value={
+                "latest_discovery_status": discovery.status if discovery else None,
+                "universe": discovery.universe if discovery else None,
+                "live_release": False,
+            },
+            required="diagnostic only; never a live-readiness gate",
+            reason=(
+                "Strategy discovery can select shadow-paper research but cannot "
+                "approve live trading."
+            ),
         ),
         "measurement": _check(
-            measurement is not None and measurement.status == "READY_FOR_LIVE_REVIEW",
-            value=measurement.status if measurement else None,
-            required="READY_FOR_LIVE_REVIEW",
-            reason="Paper execution measurement must be live-review ready.",
+            measurement is not None
+            and measurement.status == "READY_FOR_LIVE_REVIEW"
+            and (repair_policy_name is None or repaired_policy_matches),
+            value={
+                "measurement_status": measurement.status if measurement else None,
+                "measurement_policy_name": measurement_policy_name,
+                "repair_policy_name": repair_policy_name,
+            },
+            required="READY_FOR_LIVE_REVIEW with the approved repaired policy",
+            reason="Paper execution measurement must validate the approved repaired policy.",
         ),
     }
     blockers = [key for key, check in checks.items() if check["passed"] is not True]
@@ -188,6 +279,45 @@ class LiveEngine:
 
 def _check(passed: bool, *, value: object, required: object, reason: str) -> dict[str, object]:
     return {"passed": passed, "value": value, "required": required, "reason": reason}
+
+
+def _parse_json(raw: str | None) -> dict[str, object]:
+    if not raw:
+        return {}
+    try:
+        parsed: object = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _run_cities(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        parsed: object = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(city) for city in parsed if isinstance(city, str)]
+
+
+def _repair_policy_name(repair: StrategyRepairRun | None) -> str | None:
+    if repair is None:
+        return None
+    payload = _parse_json(repair.best_variant_json)
+    value = payload.get("policy_name") or payload.get("name")
+    return value if isinstance(value, str) else None
+
+
+def _measurement_policy_name(measurement: MeasurementRun | None) -> str | None:
+    if measurement is None:
+        return None
+    summary = _parse_json(measurement.summary_json)
+    metrics = _parse_json(measurement.metrics_json)
+    value = summary.get("policy_name") or metrics.get("strategy_policy_name")
+    return value if isinstance(value, str) else None
 
 
 def _risk_limits(settings: Settings) -> dict[str, str]:

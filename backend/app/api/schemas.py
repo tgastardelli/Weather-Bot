@@ -218,6 +218,348 @@ class HistoricalValidationResponse(BaseModel):
     history: list[HistoricalValidationRunOut]
 
 
+class HistoricalDiagnosticsRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    window_start: date | None
+    window_end: date | None
+    cities_json: str
+    summary_json: str
+    segments_json: str
+    calibration_json: str
+    recommendations_json: str
+
+
+class HistoricalDiagnosticsResponse(BaseModel):
+    latest: HistoricalDiagnosticsRunOut | None
+    history: list[HistoricalDiagnosticsRunOut]
+
+
+class StrategyRepairRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    window_start: date | None
+    window_end: date | None
+    cities_json: str
+    summary_json: str
+    baseline_json: str
+    variants_json: str
+    best_variant_json: str
+    gates_json: str
+
+
+class StrategyRepairResponse(BaseModel):
+    latest: StrategyRepairRunOut | None
+    history: list[StrategyRepairRunOut]
+
+
+class StrategyHypothesisAuditRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    window_start: date | None
+    window_end: date | None
+    cities_json: str
+    summary_json: str
+    blockers_json: str
+    timing_json: str
+    bucket_audit_json: str
+    stability_json: str
+    segments_json: str
+
+
+class StrategyHypothesisAuditResponse(BaseModel):
+    latest: StrategyHypothesisAuditRunOut | None
+    history: list[StrategyHypothesisAuditRunOut]
+
+
+class StrategyExperimentRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    experiment_set: str
+    window_start: date | None
+    window_end: date | None
+    cities_json: str
+    summary_json: str
+    variants_json: str
+    best_variant_json: str
+    gates_json: str
+    shadow_json: str
+
+
+class StrategyExperimentResponse(BaseModel):
+    latest: StrategyExperimentRunOut | None
+    history: list[StrategyExperimentRunOut]
+
+
+class StrategyDiscoveryRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    universe: str
+    window_start: date | None
+    window_end: date | None
+    cities_json: str
+    summary_json: str
+    families_json: str
+    best_family_json: str
+    folds_json: str
+    gates_json: str
+
+
+class StrategyDiscoveryResponse(BaseModel):
+    latest: StrategyDiscoveryRunOut | None
+    history: list[StrategyDiscoveryRunOut]
+
+
+class FeatureDiscoveryRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    window_start: date | None
+    window_end: date | None
+    cities_json: str
+    summary_json: str
+    families_json: str
+    best_family_json: str
+    folds_json: str
+    gates_json: str
+
+
+class FeatureDiscoveryResponse(BaseModel):
+    latest: FeatureDiscoveryRunOut | None
+    history: list[FeatureDiscoveryRunOut]
+
+
+class FeatureCandidateAuditRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    window_start: date | None
+    window_end: date | None
+    feature_discovery_run_id: int | None
+    cities_json: str
+    summary_json: str
+    profile_json: str
+    segments_json: str
+    decision_trace_json: str
+    gates_json: str
+
+
+class FeatureCandidateAuditResponse(BaseModel):
+    latest: FeatureCandidateAuditRunOut | None
+    history: list[FeatureCandidateAuditRunOut]
+
+
+class HighRewardCityHuntRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    window_start: date | None
+    window_end: date | None
+    cities_json: str
+    summary_json: str
+    rankings_json: str
+    candidates_json: str
+    gates_json: str
+
+
+class HighRewardCityHuntResponse(BaseModel):
+    latest: HighRewardCityHuntRunOut | None
+    history: list[HighRewardCityHuntRunOut]
+
+
+class HighRewardPaperStatusResponse(BaseModel):
+    run_at: datetime
+    status: str
+    policy_name: str
+    approved_policy_name: str | None
+    active_cities: list[str]
+    side_by_city: dict[str, str]
+    summary: dict[str, object]
+    cities: list[dict[str, object]]
+    blockers: list[str]
+    diagnostic_only: bool
+    live_release: bool
+
+
+class StrategyShadowDecisionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    ts: datetime
+    policy_name: str
+    market_id: str
+    event_id: str
+    city_slug: str
+    target_date: date
+    raw_prob: float
+    calibrated_prob: float
+    market_price: Money
+    edge_net: Money
+    reason: str | None
+    would_trade: bool
+    segment_key: str | None
+
+
+class StrategyShadowDecisionResponse(BaseModel):
+    latest: list[StrategyShadowDecisionOut]
+
+
+class DiscoveryCandidateAuditRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    window_start: date | None
+    window_end: date | None
+    discovery_run_id: int | None
+    cities_json: str
+    summary_json: str
+    concentration_json: str
+    folds_json: str
+    city_resolution_json: str
+    timing_json: str
+    segments_json: str
+    gates_json: str
+
+
+class DiscoveryCandidateAuditResponse(BaseModel):
+    latest: DiscoveryCandidateAuditRunOut | None
+    history: list[DiscoveryCandidateAuditRunOut]
+
+
+class CityResearchAuditRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    window_start: date | None
+    window_end: date | None
+    summary_json: str
+    cities_json: str
+    gates_json: str
+
+
+class CityResearchAuditResponse(BaseModel):
+    latest: CityResearchAuditRunOut | None
+    history: list[CityResearchAuditRunOut]
+
+
+class CityEdgeRankingRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    window_start: date | None
+    window_end: date | None
+    summary_json: str
+    cities_json: str
+    research_json: str
+    gates_json: str
+
+
+class CityEdgeRankingResponse(BaseModel):
+    latest: CityEdgeRankingRunOut | None
+    history: list[CityEdgeRankingRunOut]
+
+
+class WeatherCityDiscoveryRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    window_start: date | None
+    window_end: date | None
+    summary_json: str
+    cities_json: str
+    gates_json: str
+
+
+class WeatherCityDiscoveryResponse(BaseModel):
+    latest: WeatherCityDiscoveryRunOut | None
+    history: list[WeatherCityDiscoveryRunOut]
+
+
+class CityResolutionPromotionAuditRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    window_start: date | None
+    window_end: date | None
+    cities_json: str
+    summary_json: str
+    resolution_json: str
+    gates_json: str
+
+
+class CityResolutionPromotionAuditResponse(BaseModel):
+    latest: CityResolutionPromotionAuditRunOut | None
+    history: list[CityResolutionPromotionAuditRunOut]
+
+
+class CityPromotionApplyRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    requested_cities_json: str
+    promoted_cities_json: str
+    blocked_json: str
+    summary_json: str
+    gates_json: str
+
+
+class CityPromotionApplyResponse(BaseModel):
+    latest: CityPromotionApplyRunOut | None
+    history: list[CityPromotionApplyRunOut]
+
+
+class CityOnboardingRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_at: datetime
+    status: str
+    window_start: date | None
+    window_end: date | None
+    cities_json: str
+    summary_json: str
+    checks_json: str
+    gates_json: str
+
+
+class CityOnboardingResponse(BaseModel):
+    latest: CityOnboardingRunOut | None
+    history: list[CityOnboardingRunOut]
+
+
 class HistoryBackfillRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

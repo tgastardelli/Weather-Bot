@@ -48,6 +48,16 @@ class Settings(BaseSettings):
     taker_fee_rate: Decimal = Decimal("0.05")  # weather_fees: 5% taker-only
     prob_clamp_epsilon: float = 0.005
     spread_inflation: float = 1.0  # >1 infla o spread do ensemble (subdispersão)
+    strategy_policy_mode: Literal["raw", "repair_v2", "repair_v3", "repair_v4", "repair_v5"] = (
+        "raw"
+    )
+    shadow_policy_mode: Literal[
+        "off",
+        "flexible_validation_v1",
+        "discovery_v3",
+        "discovery_v4_shadow",
+        "high_reward_shadow_v1",
+    ] = "off"
 
     # Risco (rule trading-safety — válido já no paper)
     max_stake_per_order: Decimal = Decimal("10")

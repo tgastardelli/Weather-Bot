@@ -182,6 +182,316 @@ export interface HistoricalValidationResponse {
   history: HistoricalValidationRun[]
 }
 
+export interface HistoricalDiagnosticsRun {
+  id: number
+  run_at: string
+  status: string
+  window_start: string | null
+  window_end: string | null
+  cities_json: string
+  summary_json: string
+  segments_json: string
+  calibration_json: string
+  recommendations_json: string
+}
+
+export interface HistoricalDiagnosticsResponse {
+  latest: HistoricalDiagnosticsRun | null
+  history: HistoricalDiagnosticsRun[]
+}
+
+export interface StrategyRepairRun {
+  id: number
+  run_at: string
+  status: string
+  window_start: string | null
+  window_end: string | null
+  cities_json: string
+  summary_json: string
+  baseline_json: string
+  variants_json: string
+  best_variant_json: string
+  gates_json: string
+}
+
+export interface StrategyRepairResponse {
+  latest: StrategyRepairRun | null
+  history: StrategyRepairRun[]
+}
+
+export interface StrategyHypothesisAuditRun {
+  id: number
+  run_at: string
+  status: string
+  window_start: string | null
+  window_end: string | null
+  cities_json: string
+  summary_json: string
+  blockers_json: string
+  timing_json: string
+  bucket_audit_json: string
+  stability_json: string
+  segments_json: string
+}
+
+export interface StrategyHypothesisAuditResponse {
+  latest: StrategyHypothesisAuditRun | null
+  history: StrategyHypothesisAuditRun[]
+}
+
+export interface StrategyExperimentRun {
+  id: number
+  run_at: string
+  status: string
+  experiment_set: string
+  window_start: string | null
+  window_end: string | null
+  cities_json: string
+  summary_json: string
+  variants_json: string
+  best_variant_json: string
+  gates_json: string
+  shadow_json: string
+}
+
+export interface StrategyExperimentResponse {
+  latest: StrategyExperimentRun | null
+  history: StrategyExperimentRun[]
+}
+
+export interface StrategyDiscoveryRun {
+  id: number
+  run_at: string
+  status: string
+  universe: string
+  window_start: string | null
+  window_end: string | null
+  cities_json: string
+  summary_json: string
+  families_json: string
+  best_family_json: string
+  folds_json: string
+  gates_json: string
+}
+
+export interface StrategyDiscoveryResponse {
+  latest: StrategyDiscoveryRun | null
+  history: StrategyDiscoveryRun[]
+}
+
+export interface FeatureDiscoveryRun {
+  id: number
+  run_at: string
+  status: string
+  window_start: string | null
+  window_end: string | null
+  cities_json: string
+  summary_json: string
+  families_json: string
+  best_family_json: string
+  folds_json: string
+  gates_json: string
+}
+
+export interface FeatureDiscoveryResponse {
+  latest: FeatureDiscoveryRun | null
+  history: FeatureDiscoveryRun[]
+}
+
+export interface FeatureCandidateAuditRun {
+  id: number
+  run_at: string
+  status: string
+  window_start: string | null
+  window_end: string | null
+  feature_discovery_run_id: number | null
+  cities_json: string
+  summary_json: string
+  profile_json: string
+  segments_json: string
+  decision_trace_json: string
+  gates_json: string
+}
+
+export interface FeatureCandidateAuditResponse {
+  latest: FeatureCandidateAuditRun | null
+  history: FeatureCandidateAuditRun[]
+}
+
+export interface HighRewardCityHuntRun {
+  id: number
+  run_at: string
+  status: string
+  window_start: string | null
+  window_end: string | null
+  cities_json: string
+  summary_json: string
+  rankings_json: string
+  candidates_json: string
+  gates_json: string
+}
+
+export interface HighRewardCityHuntResponse {
+  latest: HighRewardCityHuntRun | null
+  history: HighRewardCityHuntRun[]
+}
+
+export interface HighRewardPaperStatusResponse {
+  run_at: string
+  status: string
+  policy_name: string
+  approved_policy_name: string | null
+  active_cities: string[]
+  side_by_city: Record<string, string>
+  summary: Record<string, unknown>
+  cities: Record<string, unknown>[]
+  blockers: string[]
+  diagnostic_only: boolean
+  live_release: boolean
+}
+
+export interface StrategyShadowDecision {
+  id: number
+  ts: string
+  policy_name: string
+  market_id: string
+  event_id: string
+  city_slug: string
+  target_date: string
+  raw_prob: number
+  calibrated_prob: number
+  market_price: string
+  edge_net: string
+  reason: string | null
+  would_trade: boolean
+  segment_key: string | null
+}
+
+export interface StrategyShadowDecisionResponse {
+  latest: StrategyShadowDecision[]
+}
+
+export interface DiscoveryCandidateAuditRun {
+  id: number
+  run_at: string
+  status: string
+  window_start: string | null
+  window_end: string | null
+  discovery_run_id: number | null
+  cities_json: string
+  summary_json: string
+  concentration_json: string
+  folds_json: string
+  city_resolution_json: string
+  timing_json: string
+  segments_json: string
+  gates_json: string
+}
+
+export interface DiscoveryCandidateAuditResponse {
+  latest: DiscoveryCandidateAuditRun | null
+  history: DiscoveryCandidateAuditRun[]
+}
+
+export interface CityResearchAuditRun {
+  id: number
+  run_at: string
+  status: string
+  window_start: string | null
+  window_end: string | null
+  summary_json: string
+  cities_json: string
+  gates_json: string
+}
+
+export interface CityResearchAuditResponse {
+  latest: CityResearchAuditRun | null
+  history: CityResearchAuditRun[]
+}
+
+export interface CityEdgeRankingRun {
+  id: number
+  run_at: string
+  status: string
+  window_start: string | null
+  window_end: string | null
+  summary_json: string
+  cities_json: string
+  research_json: string
+  gates_json: string
+}
+
+export interface CityEdgeRankingResponse {
+  latest: CityEdgeRankingRun | null
+  history: CityEdgeRankingRun[]
+}
+
+export interface WeatherCityDiscoveryRun {
+  id: number
+  run_at: string
+  status: string
+  window_start: string | null
+  window_end: string | null
+  summary_json: string
+  cities_json: string
+  gates_json: string
+}
+
+export interface WeatherCityDiscoveryResponse {
+  latest: WeatherCityDiscoveryRun | null
+  history: WeatherCityDiscoveryRun[]
+}
+
+export interface CityResolutionPromotionAuditRun {
+  id: number
+  run_at: string
+  status: string
+  window_start: string | null
+  window_end: string | null
+  cities_json: string
+  summary_json: string
+  resolution_json: string
+  gates_json: string
+}
+
+export interface CityResolutionPromotionAuditResponse {
+  latest: CityResolutionPromotionAuditRun | null
+  history: CityResolutionPromotionAuditRun[]
+}
+
+export interface CityPromotionApplyRun {
+  id: number
+  run_at: string
+  status: string
+  requested_cities_json: string
+  promoted_cities_json: string
+  blocked_json: string
+  summary_json: string
+  gates_json: string
+}
+
+export interface CityPromotionApplyResponse {
+  latest: CityPromotionApplyRun | null
+  history: CityPromotionApplyRun[]
+}
+
+export interface CityOnboardingRun {
+  id: number
+  run_at: string
+  status: string
+  window_start: string | null
+  window_end: string | null
+  cities_json: string
+  summary_json: string
+  checks_json: string
+  gates_json: string
+}
+
+export interface CityOnboardingResponse {
+  latest: CityOnboardingRun | null
+  history: CityOnboardingRun[]
+}
+
 export interface HistoryBackfillRun {
   id: number
   run_at: string

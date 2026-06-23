@@ -27,6 +27,7 @@ from app.weather.open_meteo import OpenMeteoClient
 logger = logging.getLogger(__name__)
 
 JobName = Literal["markets", "all"]
+HIGH_REWARD_FAST_LANE_CITIES = ["atlanta", "seattle", "toronto"]
 
 
 class PolymarketClientLike(Protocol):
@@ -112,7 +113,27 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the evidence report after an all collection run.",
     )
+    parser.add_argument(
+        "--high-reward-fast-lane",
+        action="store_true",
+        help=(
+            "Run paper-only repair_v5 high-reward collection for "
+            "atlanta,seattle,toronto."
+        ),
+    )
     return parser
+
+
+def apply_high_reward_fast_lane_settings(settings: Settings) -> Settings:
+    """Return paper-only settings for the approved high-reward V5 fast lane."""
+    return settings.model_copy(
+        update={
+            "cities": HIGH_REWARD_FAST_LANE_CITIES,
+            "strategy_policy_mode": "repair_v5",
+            "mode": "paper",
+            "live_trading_enabled": False,
+        }
+    )
 
 
 async def _scan_signals(
@@ -172,17 +193,21 @@ async def run_once(
     cities: list[str] | None = None,
     include_signals: bool = True,
     include_evidence: bool = True,
+    high_reward_fast_lane: bool = False,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     pm_client: PolymarketClientLike | None = None,
     om_client: OpenMeteoClient | None = None,
     metar_client: MetarClient | None = None,
 ) -> RunOnceResult:
     base_settings = settings or get_settings()
-    run_settings = (
-        base_settings.model_copy(update={"cities": cities})
-        if cities is not None
-        else base_settings
-    )
+    if high_reward_fast_lane:
+        run_settings = apply_high_reward_fast_lane_settings(base_settings)
+    else:
+        run_settings = (
+            base_settings.model_copy(update={"cities": cities})
+            if cities is not None
+            else base_settings
+        )
     result = RunOnceResult(job=job)
 
     engine = None
@@ -276,6 +301,7 @@ def main() -> None:
             cities=parse_cities(args.cities),
             include_signals=not args.no_signals,
             include_evidence=not args.no_evidence,
+            high_reward_fast_lane=bool(args.high_reward_fast_lane),
         )
     )
     _print_result(result, as_json=bool(args.json))

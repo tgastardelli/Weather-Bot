@@ -10,6 +10,7 @@ from app.collectors.forecasts import collect_forecasts
 from app.collectors.markets import collect_markets
 from app.collectors.observations import collect_observations
 from app.collectors.resolutions import collect_resolutions
+from app.collectors.run_once import apply_high_reward_fast_lane_settings
 from app.config import Settings
 from app.execution.paper import settle_resolved_positions, submit_proposed_signals
 from app.polymarket.client import PolymarketPublicClient
@@ -18,6 +19,13 @@ from app.weather.metar import MetarClient
 from app.weather.open_meteo import OpenMeteoClient
 
 logger = logging.getLogger(__name__)
+
+
+def scheduler_effective_settings(settings: Settings) -> Settings:
+    """Apply scheduler-wide operational settings for active paper strategies."""
+    if settings.strategy_policy_mode == "repair_v5":
+        return apply_high_reward_fast_lane_settings(settings)
+    return settings
 
 
 async def _run_signal_scan(
@@ -68,6 +76,7 @@ async def _run_weekly_validation(
     from analysis.evidence import generate_evidence_report
     from analysis.historical_validation import generate_historical_validation_report
     from analysis.measurement import build_measurement_report
+    from analysis.strategy_repair import generate_strategy_repair_report
 
     logger.info("weekly validation started")
     calibration_rows = await compute_calibration(session_factory)
@@ -84,19 +93,26 @@ async def _run_weekly_validation(
         cities=settings.cities,
         days=settings.validation_history_days,
     )
+    repair = await generate_strategy_repair_report(
+        session_factory,
+        settings,
+        cities=settings.cities,
+        days=settings.validation_history_days,
+    )
     await generate_evidence_report(session_factory, settings, cities=settings.cities)
     measurement = await build_measurement_report(session_factory, settings)
     evidence = await generate_evidence_report(session_factory, settings, cities=settings.cities)
     logger.info(
         (
             "weekly validation finished: calibration=%d volatility=%d backtests=%d "
-            "measurement=%s historical=%s evidence=%s"
+            "measurement=%s historical=%s repair=%s evidence=%s"
         ),
         calibration_rows,
         len(volatility_rows),
         len(backtest_results),
         measurement.status,
         historical.status,
+        repair.status,
         evidence.status,
     )
 
@@ -109,6 +125,7 @@ def build_scheduler(
     settings: Settings,
 ) -> AsyncIOScheduler:
     """Monta o scheduler com jobs idempotentes (não inicia)."""
+    scheduler_settings = scheduler_effective_settings(settings)
     scheduler = AsyncIOScheduler(timezone="UTC")
     common: dict[str, Any] = {
         "coalesce": True,
@@ -121,47 +138,47 @@ def build_scheduler(
     }
 
     async def markets_job() -> None:
-        await collect_markets(session_factory, pm_client, settings)
+        await collect_markets(session_factory, pm_client, scheduler_settings)
 
     async def forecasts_job() -> None:
-        await collect_forecasts(session_factory, om_client, settings)
-        await _run_signal_scan(session_factory, settings)
+        await collect_forecasts(session_factory, om_client, scheduler_settings)
+        await _run_signal_scan(session_factory, scheduler_settings)
 
     async def observations_job() -> None:
-        await collect_observations(session_factory, metar_client, settings)
+        await collect_observations(session_factory, metar_client, scheduler_settings)
 
     async def resolutions_job() -> None:
         await collect_resolutions(session_factory, pm_client)
-        await _run_paper_settlement(session_factory, settings)
-        await _run_evidence_report(session_factory, settings)
-        await _run_measurement_report(session_factory, settings)
+        await _run_paper_settlement(session_factory, scheduler_settings)
+        await _run_evidence_report(session_factory, scheduler_settings)
+        await _run_measurement_report(session_factory, scheduler_settings)
 
     async def weekly_validation_job() -> None:
-        await _run_weekly_validation(session_factory, settings)
+        await _run_weekly_validation(session_factory, scheduler_settings)
 
     scheduler.add_job(
-        markets_job, "interval", minutes=settings.markets_interval_minutes,
+        markets_job, "interval", minutes=scheduler_settings.markets_interval_minutes,
         id="markets", **common,
     )
     scheduler.add_job(
-        forecasts_job, "interval", minutes=settings.forecasts_interval_minutes,
+        forecasts_job, "interval", minutes=scheduler_settings.forecasts_interval_minutes,
         id="forecasts", **common,
     )
     scheduler.add_job(
-        observations_job, "interval", minutes=settings.observations_interval_minutes,
+        observations_job, "interval", minutes=scheduler_settings.observations_interval_minutes,
         id="observations", **common,
     )
     scheduler.add_job(
-        resolutions_job, "interval", minutes=settings.resolutions_interval_minutes,
+        resolutions_job, "interval", minutes=scheduler_settings.resolutions_interval_minutes,
         id="resolutions", **common,
     )
-    if settings.weekly_validation_enabled:
+    if scheduler_settings.weekly_validation_enabled:
         scheduler.add_job(
             weekly_validation_job,
             "cron",
-            day_of_week=settings.weekly_validation_day_of_week,
-            hour=settings.weekly_validation_hour_utc,
-            minute=settings.weekly_validation_minute_utc,
+            day_of_week=scheduler_settings.weekly_validation_day_of_week,
+            hour=scheduler_settings.weekly_validation_hour_utc,
+            minute=scheduler_settings.weekly_validation_minute_utc,
             id="weekly-validation",
             **weekly_common,
         )
@@ -170,10 +187,10 @@ def build_scheduler(
             "scheduler montado: markets=%dmin forecasts=%dmin obs=%dmin "
             "resolutions=%dmin weekly_validation=%s"
         ),
-        settings.markets_interval_minutes,
-        settings.forecasts_interval_minutes,
-        settings.observations_interval_minutes,
-        settings.resolutions_interval_minutes,
-        settings.weekly_validation_enabled,
+        scheduler_settings.markets_interval_minutes,
+        scheduler_settings.forecasts_interval_minutes,
+        scheduler_settings.observations_interval_minutes,
+        scheduler_settings.resolutions_interval_minutes,
+        scheduler_settings.weekly_validation_enabled,
     )
     return scheduler

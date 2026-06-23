@@ -120,16 +120,22 @@ class PolymarketPublicClient:
         events: list[dict[str, Any]] = []
         offset = 0
         while True:
-            batch: list[dict[str, Any]] = await self._get_json(
-                f"{GAMMA_BASE}/events",
-                params={
-                    "tag_id": WEATHER_TAG_ID,
-                    "active": str(active).lower(),
-                    "closed": str(closed).lower(),
-                    "limit": page_size,
-                    "offset": offset,
-                },
-            )
+            try:
+                batch: list[dict[str, Any]] = await self._get_json(
+                    f"{GAMMA_BASE}/events",
+                    params={
+                        "tag_id": WEATHER_TAG_ID,
+                        "active": str(active).lower(),
+                        "closed": str(closed).lower(),
+                        "limit": page_size,
+                        "offset": offset,
+                    },
+                )
+            except httpx.HTTPStatusError as exc:
+                status = getattr(exc.response, "status_code", None)
+                if status == 422 and offset > 0:
+                    return events
+                raise
             events.extend(batch)
             if len(batch) < page_size:
                 return events

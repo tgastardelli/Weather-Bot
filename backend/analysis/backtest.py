@@ -11,7 +11,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Literal, cast
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings, get_settings
@@ -45,6 +45,8 @@ HISTORICAL_PRICE_EXECUTION_PROXY = "polymarket_prices_history_last_price_no_book
 HISTORICAL_TRADE_EXECUTION_PROXY = "historical_last_trade_no_book_depth"
 HISTORICAL_MIXED_EXECUTION_PROXY = "historical_last_trade_or_prices_history_no_book_depth"
 HISTORICAL_MODEL_INPUT_SOURCE = "historical_deterministic_forecasts_as_members"
+HISTORICAL_TRADE_PRICE_SAMPLING = "last_trade_per_market_per_60m_bucket"
+HISTORICAL_PRICE_HISTORY_SAMPLING = "prices_history_points"
 BOOTSTRAP_ITERATIONS = 500
 BacktestMode = Literal["stored-signals", "replay", "historical-price", "both"]
 Profile = Literal["longshot", "max_edge"]
@@ -54,16 +56,23 @@ OBSERVED_SOURCE_PRIORITY = {"resolution": 3, "era5": 2, "metar": 1}
 
 @dataclass(frozen=True)
 class TradeResult:
+    ts: datetime | None
     pnl: Decimal
     stake: Decimal
     won: bool
     outcome: float
     model_prob: float | None = None
     market_price: Decimal | None = None
+    market_id: str | None = None
+    event_id: str | None = None
     city_slug: str | None = None
+    target_date: date | None = None
     lead_days: int | None = None
     bucket_kind: str | None = None
+    bucket_label: str | None = None
     edge_net: Decimal | None = None
+    hours_to_close: float | None = None
+    price_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +84,7 @@ class EventReplayProbs:
 @dataclass(frozen=True)
 class HistoricalMarketPoint:
     ts: datetime
+    sampled_ts: datetime
     market_id: str
     price: Decimal
     source: Literal["data_api_trades", "clob_prices_history"]
@@ -245,15 +255,22 @@ def _concentration_metrics(trades: list[TradeResult]) -> dict[str, object]:
 
 def _trade_result(
     *,
+    ts: datetime | None = None,
     stake: Decimal,
     market_price: Decimal,
     model_prob: float,
     winner: bool,
     fee_rate: Decimal,
+    market_id: str | None = None,
+    event_id: str | None = None,
     city_slug: str | None = None,
+    target_date: date | None = None,
     lead_days: int | None = None,
     bucket_kind: str | None = None,
+    bucket_label: str | None = None,
     edge_net: Decimal | None = None,
+    hours_to_close: float | None = None,
+    price_source: str | None = None,
 ) -> TradeResult | None:
     cost = cost_per_share(market_price, fee_rate)
     if cost <= 0:
@@ -262,16 +279,23 @@ def _trade_result(
     settlement = Decimal(1) if winner else Decimal(0)
     pnl = (shares * (settlement - cost)).quantize(CENT)
     return TradeResult(
+        ts=ts,
         pnl=pnl,
         stake=stake,
         won=pnl > 0,
         outcome=1.0 if winner else 0.0,
         model_prob=model_prob,
         market_price=market_price,
+        market_id=market_id,
+        event_id=event_id,
         city_slug=city_slug,
+        target_date=target_date,
         lead_days=lead_days,
         bucket_kind=bucket_kind,
+        bucket_label=bucket_label,
         edge_net=edge_net,
+        hours_to_close=hours_to_close,
+        price_source=price_source,
     )
 
 
@@ -342,11 +366,16 @@ async def _profile_trades(
         if market.winner is None:
             continue
         trade = _trade_result(
+            ts=signal.ts,
             stake=signal.stake,
             market_price=signal.market_price,
             model_prob=signal.model_prob,
             winner=market.winner,
             fee_rate=fee_rate,
+            market_id=market.id,
+            bucket_kind=market.bucket_kind,
+            bucket_label=market.group_item_title,
+            price_source="stored_signal",
         )
         if trade is not None:
             trades.append(trade)
@@ -635,6 +664,17 @@ def _is_recent_duplicate(
     return last_ts >= ts - SIGNAL_DEDUPE_WINDOW and abs(last_edge - edge_net) < SIGNAL_EDGE_DELTA
 
 
+def _parse_hour_bucket(raw: object, fallback: datetime) -> datetime:
+    if isinstance(raw, str):
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    return fallback.replace(minute=0, second=0, microsecond=0)
+
+
 async def _replay_profile_trades(
     session: AsyncSession, settings: Settings
 ) -> tuple[dict[Profile, list[TradeResult]], int]:
@@ -718,15 +758,22 @@ async def _replay_profile_trades(
                 continue
 
             trade = _trade_result(
+                ts=price_row.ts,
                 stake=stake,
                 market_price=ask,
                 model_prob=prob,
                 winner=market.winner,
                 fee_rate=settings.taker_fee_rate,
+                market_id=market.id,
+                event_id=event_row.id,
                 city_slug=city.slug,
+                target_date=event_row.target_date,
                 lead_days=event_probs.lead_days,
                 bucket_kind=market.bucket_kind,
+                bucket_label=market.group_item_title,
                 edge_net=e_net,
+                hours_to_close=hours_to_close,
+                price_source="market_price_snapshot",
             )
             if trade is None:
                 continue
@@ -750,50 +797,110 @@ async def _replay_profile_trades(
 
 async def _historical_price_profile_trades(
     session: AsyncSession, settings: Settings
-) -> tuple[dict[Profile, list[TradeResult]], int, dict[str, int]]:
+) -> tuple[dict[Profile, list[TradeResult]], int, dict[str, int], dict[str, int], dict[str, int]]:
     start = datetime.now(UTC).date() - timedelta(days=settings.validation_history_days)
 
-    trade_query: Select[tuple[MarketTradeHistoryPoint, Market, Event, City]] = (
-        select(MarketTradeHistoryPoint, Market, Event, City)
+    trade_filters = [
+        Market.winner.is_not(None),
+        Event.end_date.is_not(None),
+        Event.target_date >= start,
+        MarketTradeHistoryPoint.ts <= Event.end_date,
+    ]
+    price_filters = [
+        Market.winner.is_not(None),
+        Event.end_date.is_not(None),
+        Event.target_date >= start,
+        MarketPriceHistoryPoint.ts <= Event.end_date,
+    ]
+    if settings.cities is not None:
+        trade_filters.append(Event.city_slug.in_(settings.cities))
+        price_filters.append(Event.city_slug.in_(settings.cities))
+
+    raw_trade_count_query = (
+        select(func.count(MarketTradeHistoryPoint.id))
+        .select_from(MarketTradeHistoryPoint)
         .join(Market, MarketTradeHistoryPoint.market_id == Market.id)
         .join(Event, Market.event_id == Event.id)
         .join(City, Event.city_slug == City.slug)
-        .where(
-            Market.winner.is_not(None),
-            Event.end_date.is_not(None),
-            Event.target_date >= start,
-            MarketTradeHistoryPoint.ts <= Event.end_date,
-        )
-        .order_by(MarketTradeHistoryPoint.ts, Market.id)
+        .where(*trade_filters)
     )
-    if settings.cities is not None:
-        trade_query = trade_query.where(Event.city_slug.in_(settings.cities))
-
-    trade_rows = (await session.execute(trade_query)).all()
-    trade_market_ids = {row.market_id for row, _, _, _ in trade_rows}
-
-    price_query: Select[tuple[MarketPriceHistoryPoint, Market, Event, City]] = (
-        select(MarketPriceHistoryPoint, Market, Event, City)
+    raw_price_count_query = (
+        select(func.count(MarketPriceHistoryPoint.id))
+        .select_from(MarketPriceHistoryPoint)
         .join(Market, MarketPriceHistoryPoint.market_id == Market.id)
         .join(Event, Market.event_id == Event.id)
         .join(City, Event.city_slug == City.slug)
-        .where(
-            Market.winner.is_not(None),
-            Event.end_date.is_not(None),
-            Event.target_date >= start,
-            MarketPriceHistoryPoint.ts <= Event.end_date,
+        .where(*price_filters)
+    )
+    raw_source_counts = {
+        "data_api_trades": int((await session.execute(raw_trade_count_query)).scalar_one() or 0),
+        "clob_prices_history": int(
+            (await session.execute(raw_price_count_query)).scalar_one() or 0
+        ),
+    }
+
+    trade_bucket = func.strftime("%Y-%m-%d %H:00:00", MarketTradeHistoryPoint.ts)
+    trade_rank = func.row_number().over(
+        partition_by=(MarketTradeHistoryPoint.market_id, trade_bucket),
+        order_by=(MarketTradeHistoryPoint.ts.desc(), MarketTradeHistoryPoint.id.desc()),
+    )
+    sampled_trade_ids = (
+        select(
+            MarketTradeHistoryPoint.id.label("trade_id"),
+            trade_bucket.label("sampled_ts"),
+            trade_rank.label("trade_rank"),
         )
+        .select_from(MarketTradeHistoryPoint)
+        .join(Market, MarketTradeHistoryPoint.market_id == Market.id)
+        .join(Event, Market.event_id == Event.id)
+        .join(City, Event.city_slug == City.slug)
+        .where(*trade_filters)
+    ).subquery()
+
+    trade_query = (
+        select(
+            MarketTradeHistoryPoint,
+            Market,
+            Event,
+            City,
+            sampled_trade_ids.c.sampled_ts,
+        )
+        .select_from(MarketTradeHistoryPoint)
+        .join(sampled_trade_ids, MarketTradeHistoryPoint.id == sampled_trade_ids.c.trade_id)
+        .join(Market, MarketTradeHistoryPoint.market_id == Market.id)
+        .join(Event, Market.event_id == Event.id)
+        .join(City, Event.city_slug == City.slug)
+        .where(sampled_trade_ids.c.trade_rank == 1)
+        .order_by(MarketTradeHistoryPoint.ts, Market.id)
+    )
+    trade_rows = (await session.execute(trade_query)).all()
+    trade_market_ids = {row.market_id for row, _, _, _, _ in trade_rows}
+
+    price_query: Select[tuple[MarketPriceHistoryPoint, Market, Event, City]] = (
+        select(MarketPriceHistoryPoint, Market, Event, City)
+        .select_from(MarketPriceHistoryPoint)
+        .join(Market, MarketPriceHistoryPoint.market_id == Market.id)
+        .join(Event, Market.event_id == Event.id)
+        .join(City, Event.city_slug == City.slug)
+        .where(*price_filters)
         .order_by(MarketPriceHistoryPoint.ts, Market.id)
     )
-    if settings.cities is not None:
-        price_query = price_query.where(Event.city_slug.in_(settings.cities))
-
     price_rows = (await session.execute(price_query)).all()
+    fallback_price_rows = [
+        (row, market, event, city)
+        for row, market, event, city in price_rows
+        if row.market_id not in trade_market_ids
+    ]
+    sampled_source_counts = {
+        "data_api_trades": len(trade_rows),
+        "clob_prices_history": len(fallback_price_rows),
+    }
 
     rows: list[tuple[HistoricalMarketPoint, Market, Event, City]] = [
         (
             HistoricalMarketPoint(
                 ts=row.ts,
+                sampled_ts=_parse_hour_bucket(sampled_ts, row.ts),
                 market_id=row.market_id,
                 price=row.price,
                 source="data_api_trades",
@@ -802,12 +909,13 @@ async def _historical_price_profile_trades(
             event,
             city,
         )
-        for row, market, event, city in trade_rows
+        for row, market, event, city, sampled_ts in trade_rows
     ]
     rows.extend(
         (
             HistoricalMarketPoint(
                 ts=row.ts,
+                sampled_ts=row.ts,
                 market_id=row.market_id,
                 price=row.price,
                 source="clob_prices_history",
@@ -816,8 +924,7 @@ async def _historical_price_profile_trades(
             event,
             city,
         )
-        for row, market, event, city in price_rows
-        if row.market_id not in trade_market_ids
+        for row, market, event, city in fallback_price_rows
     )
     rows.sort(key=lambda item: (item[0].ts, item[0].market_id))
 
@@ -840,10 +947,10 @@ async def _historical_price_profile_trades(
         if not (Decimal(0) < price < Decimal(1)):
             continue
 
-        cache_key = (event_row.id, price_row.ts)
+        cache_key = (event_row.id, price_row.sampled_ts)
         if cache_key not in prob_cache:
             prob_cache[cache_key] = await _event_historical_probs_at(
-                session, settings, event_row, city, price_row.ts, bias_cache
+                session, settings, event_row, city, price_row.sampled_ts, bias_cache
             )
         event_probs = prob_cache[cache_key]
         if event_probs is None:
@@ -888,15 +995,22 @@ async def _historical_price_profile_trades(
                 continue
 
             trade = _trade_result(
+                ts=price_row.ts,
                 stake=stake,
                 market_price=price,
                 model_prob=prob,
                 winner=market.winner,
                 fee_rate=settings.taker_fee_rate,
+                market_id=market.id,
+                event_id=event_row.id,
                 city_slug=city.slug,
+                target_date=event_row.target_date,
                 lead_days=event_probs.lead_days,
                 bucket_kind=market.bucket_kind,
+                bucket_label=market.group_item_title,
                 edge_net=e_net,
+                hours_to_close=hours_to_close,
+                price_source=price_row.source,
             )
             if trade is None:
                 continue
@@ -905,7 +1019,7 @@ async def _historical_price_profile_trades(
             last_signals[(market.id, profile)] = (price_row.ts, e_net)
             trades[profile].append(trade)
 
-    return trades, n_candidate_points, source_counts
+    return trades, n_candidate_points, source_counts, raw_source_counts, sampled_source_counts
 
 
 async def run_backtest(
@@ -956,9 +1070,16 @@ async def run_backtest(
                 historical_trades,
                 n_candidate_points,
                 price_source_counts,
+                raw_price_source_counts,
+                sampled_price_source_counts,
             ) = await _historical_price_profile_trades(session, settings)
             has_trades = price_source_counts.get("data_api_trades", 0) > 0
             has_prices = price_source_counts.get("clob_prices_history", 0) > 0
+            price_sampling = (
+                HISTORICAL_TRADE_PRICE_SAMPLING
+                if raw_price_source_counts.get("data_api_trades", 0) > 0
+                else HISTORICAL_PRICE_HISTORY_SAMPLING
+            )
             if has_trades and has_prices:
                 execution_proxy = HISTORICAL_MIXED_EXECUTION_PROXY
             elif has_trades:
@@ -980,7 +1101,12 @@ async def run_backtest(
                         "execution_proxy": execution_proxy,
                         "model_input_source": HISTORICAL_MODEL_INPUT_SOURCE,
                         "n_candidate_price_points": n_candidate_points,
+                        "n_raw_price_points": sum(raw_price_source_counts.values()),
+                        "n_sampled_price_points": sum(sampled_price_source_counts.values()),
+                        "price_sampling": price_sampling,
                         "price_source_counts": price_source_counts,
+                        "price_source_raw_counts": raw_price_source_counts,
+                        "price_source_sampled_counts": sampled_price_source_counts,
                         "walk_forward_calibration": True,
                     },
                 )

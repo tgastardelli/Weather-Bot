@@ -106,7 +106,20 @@ async def _paper_cash(session: AsyncSession, settings: Settings) -> Decimal:
     return (settings.paper_initial_cash + Decimal(str(cash_delta))).quantize(MONEY_PRECISION)
 
 
-async def _latest_mark(session: AsyncSession, market_id: str) -> Decimal:
+def _settlement_price(market: Market, token_id: str) -> Decimal:
+    if market.winner is None:
+        return ZERO
+    if token_id == market.yes_token_id:
+        return ONE if market.winner else ZERO
+    if token_id == market.no_token_id:
+        return ZERO if market.winner else ONE
+    return ZERO
+
+
+async def _latest_mark(session: AsyncSession, market_id: str, token_id: str) -> Decimal:
+    market = await session.get(Market, market_id)
+    if market is None:
+        return ZERO
     snapshot = (
         await session.execute(
             select(MarketPriceSnapshot)
@@ -117,6 +130,12 @@ async def _latest_mark(session: AsyncSession, market_id: str) -> Decimal:
     ).scalar_one_or_none()
     if snapshot is None:
         return ZERO
+    if token_id == market.no_token_id:
+        yes_reference = snapshot.best_ask or snapshot.mid
+        if yes_reference is None:
+            return ZERO
+        mark = (ONE - yes_reference).quantize(MONEY_PRECISION)
+        return min(max(mark, ZERO), ONE)
     return snapshot.best_bid or snapshot.mid or ZERO
 
 
@@ -132,7 +151,7 @@ async def snapshot_equity(
     position_value = ZERO
     unrealized = ZERO
     for position in positions:
-        mark = await _latest_mark(session, position.market_id)
+        mark = await _latest_mark(session, position.market_id, position.token_id)
         position_value += position.qty * mark
         unrealized += position.qty * (mark - position.avg_cost)
     realized = (
@@ -151,7 +170,7 @@ async def snapshot_equity(
 
 
 class PaperEngine:
-    """Simulates BUY YES taker FAK fills against captured books."""
+    """Simulates BUY outcome-token taker FAK fills against captured books."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -414,7 +433,7 @@ async def settle_resolved_positions(
         ).scalar_one_or_none()
         if order is None:
             continue
-        settlement_price = ONE if market.winner else ZERO
+        settlement_price = _settlement_price(market, position.token_id)
         qty = position.qty
         cash_delta = (qty * settlement_price).quantize(MONEY_PRECISION)
         realized = (qty * (settlement_price - position.avg_cost)).quantize(MONEY_PRECISION)
